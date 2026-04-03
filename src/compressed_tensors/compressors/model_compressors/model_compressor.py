@@ -43,6 +43,8 @@ class ModelCompressor:
 
     Decompression Lifecycle
         - model = AutoModelForCausalLM.from_pretrained(quantized_path)
+          (multimodal checkpoints such as Gemma4ForConditionalGeneration use the same
+          ``quantization_config`` in config.json once saved via this compressor)
             - CompressedTensorsHfQuantizer.__init__
                 - compressor = ModelCompressor.from_compression_config(ct_config)
             - CompressedTensorsHfQuantizer._process_model_before_weight_loading

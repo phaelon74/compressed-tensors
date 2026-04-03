@@ -121,8 +121,16 @@ def initialize_module_for_quantization(
 
 
 def is_attention_module(module: Module):
+    """
+    Heuristic match for transformer attention blocks.
+
+    Includes `q_proj` so layouts like Gemma 4 text attention (separate Q/K/V linears,
+    optional shared KV / missing v_proj) still classify as attention when the class
+    name contains 'attention'.
+    """
     return "attention" in module.__class__.__name__.lower() and (
-        hasattr(module, "k_proj")
+        hasattr(module, "q_proj")
+        or hasattr(module, "k_proj")
         or hasattr(module, "v_proj")
         or hasattr(module, "qkv_proj")
         or hasattr(module, "kv_b_proj")

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import logging
 from collections import defaultdict
 from enum import Enum
 from typing import Annotated, Any
@@ -11,10 +12,16 @@ from compressed_tensors.quantization.quant_scheme import (
     QuantizationScheme,
     preset_name_to_scheme,
 )
-from compressed_tensors.quantization.utils import is_module_quantized, module_type
+from compressed_tensors.quantization.utils import (
+    is_model_quantized,
+    is_module_quantized,
+    module_type,
+)
 from pydantic import BaseModel, ConfigDict, Field
 from torch.nn import Module
 
+
+_LOGGER = logging.getLogger(__name__)
 
 __all__ = [
     "QuantizationStatus",
@@ -183,7 +190,7 @@ class QuantizationConfig(BaseModel):
         # this keeps track of any kvcache schemes
         kv_cache_scheme: QuantizationArgs | None = None
 
-        for name, submodule in model.named_modules():
+        for name, submodule in model.named_modules(remove_duplicate=True):
             layer_type: str = module_type(submodule)
 
             # add config group if quantized non-attention or attention quant
@@ -212,9 +219,17 @@ class QuantizationConfig(BaseModel):
                     ignore[layer_type] = []
                 ignore[layer_type].append(name)
 
-        if (
-            len(quantization_schemes) == 0 and kv_cache_scheme is None
-        ):  # No quantized layers
+        if len(quantization_schemes) == 0 and kv_cache_scheme is None:
+            if is_model_quantized(model):
+                _LOGGER.warning(
+                    "QuantizationConfig.from_pretrained found quantized modules on the "
+                    "model but could not build a config (no config_groups and no "
+                    "kv_cache_scheme). Saving with compressed-tensors may omit "
+                    "quantization_config in config.json. This can happen when "
+                    "quantization metadata is only present on attention parents without "
+                    "the expected %s submodule, or the model structure is unsupported.",
+                    IMPL_ATTR,
+                )
             return None
 
         # create ignore list, only include layers whose class has ever been targeted

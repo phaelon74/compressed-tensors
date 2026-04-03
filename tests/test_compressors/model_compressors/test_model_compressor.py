@@ -43,6 +43,74 @@ class TwoLayerModel(nn.Module):
         return x
 
 
+class _Gemma4LikeTextAttention(nn.Module):
+    """Mimics Gemma4TextAttention naming; optional v_proj=None (shared KV)."""
+
+    def __init__(self):
+        super().__init__()
+        self.q_proj = nn.Linear(8, 8, bias=False)
+        self.k_proj = nn.Linear(8, 8, bias=False)
+        self.v_proj = None
+        self.o_proj = nn.Linear(8, 8, bias=False)
+
+
+class _Gemma4LikeClippableLinear(nn.Module):
+    """Mimics Gemma4ClippableLinear: real weights live on child ``linear``."""
+
+    def __init__(self):
+        super().__init__()
+        self.linear = nn.Linear(4, 4, bias=False)
+
+
+class _Gemma4LikeVisionAttention(nn.Module):
+    """Class name contains 'attention'; projections use clippable wrappers."""
+
+    def __init__(self):
+        super().__init__()
+        self.q_proj = _Gemma4LikeClippableLinear()
+
+
+class Gemma4LikeStubModel(nn.Module):
+    """Shallow tree similar to Gemma4 language + vision linears for config extraction."""
+
+    def __init__(self):
+        super().__init__()
+        self.language_model = nn.ModuleDict(
+            {
+                "layers": nn.ModuleList(
+                    [
+                        nn.ModuleDict(
+                            {
+                                "self_attn": _Gemma4LikeTextAttention(),
+                                "mlp": nn.ModuleDict(
+                                    {
+                                        "gate_proj": nn.Linear(8, 8, bias=False),
+                                    }
+                                ),
+                            }
+                        )
+                    ]
+                )
+            }
+        )
+        self.vision_tower = nn.ModuleDict(
+            {
+                "encoder": nn.ModuleDict(
+                    {
+                        "layers": nn.ModuleList(
+                            [
+                                nn.ModuleDict(
+                                    {"self_attn": _Gemma4LikeVisionAttention()}
+                                )
+                            ]
+                        )
+                    }
+                )
+            }
+        )
+        self.lm_head = nn.Linear(8, 8, bias=False)
+
+
 def create_quantization_config(
     bits=8, type="int", strategy="tensor", format="int-quantized"
 ):
@@ -223,6 +291,20 @@ class TestModelCompressorCompression:
 
         # Format should be inferred as pack-quantized
         assert compressor.quantization_config.format == CompressionFormat.pack_quantized
+
+    def test_from_pretrained_model_gemma4_like_hierarchy(self):
+        """Quantization config extraction works on Gemma4-like module naming/layout."""
+        model = Gemma4LikeStubModel()
+        scheme = create_quantization_scheme(bits=4, type="int", strategy="channel")
+        for _name, module in model.named_modules():
+            if isinstance(module, nn.Linear):
+                module.quantization_scheme = scheme
+                module.quantization_status = QuantizationStatus.FROZEN
+
+        compressor = ModelCompressor.from_pretrained_model(model)
+
+        assert compressor.quantization_config is not None
+        assert len(compressor.quantization_config.config_groups) >= 1
 
 
 class TestModelCompressorConfigUpdate:
